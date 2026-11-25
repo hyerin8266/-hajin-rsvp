@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>하진이 첫돌 · 참석 답장</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4eee5;color:#372820;font:16px/1.6 system-ui,sans-serif}main{max-width:540px;margin:auto;padding:38px 18px}header{text-align:center;padding:24px 0 32px;border-top:1px solid #b89a7e}header p{margin:5px}h1{font:700 clamp(30px,8vw,47px)/1.25 Georgia,serif;margin:10px 0 14px}small{letter-spacing:.24em;color:#784930}section{padding:24px;background:#fffcf8;border:1px solid #dbcabb;border-radius:20px}h2{margin:0 0 16px;font-size:23px}label,legend{font-weight:650}input:not([type=radio]),button{font:inherit;width:100%;min-height:47px;border-radius:10px;padding:9px 13px}input:not([type=radio]){border:1px solid #aa9586;background:#fff;margin:6px 0 16px}fieldset{margin:0 0 16px;padding:0;border:0}legend{margin-bottom:6px}.options{display:grid;gap:7px}.options label{border:1px solid #dbcabb;border-radius:10px;padding:8px 12px;cursor:pointer}.options label:has(:checked){background:#f4e1d3;border-color:#875239}input[type=radio]{accent-color:#7c4633;margin-right:8px}button{border:0;background:#754733;color:#fff;font-weight:700;cursor:pointer}button:disabled{opacity:.55}a{color:#754733}footer{text-align:center;margin:22px 0}output{display:block;margin-top:10px}output:empty{display:none}ul{padding-left:21px}li{overflow-wrap:anywhere}.muted{color:#654f43;font-size:14px;margin:0 0 18px}
+</style></head><body><main>
+<header><small>HAJIN’S FIRST BIRTHDAY</small><h1>하진이의 첫돌</h1><p>2027년 1월 16일 토요일</p><p>음성 스완레스토랑</p></header>
+<section id="guest"><h2>참석 답장</h2><p class="muted">가족 대표 한 분이 답장해 주세요.</p>
+<form id="reply"><label for="name">보내는 분 이름</label><input id="name" name="name" required maxlength="40" autocomplete="name" placeholder="예: 김하나">
+<fieldset><legend>참석 여부</legend><div class="options">
+<label><input type="radio" name="status" value="yes" required>참석해요</label>
+<label><input type="radio" name="status" value="no">참석이 어려워요</label>
+<label><input type="radio" name="status" value="maybe">아직 미정이에요</label>
+</div></fieldset>
+<div id="count" hidden><label for="guests">참석 인원 (본인 포함)</label><input id="guests" type="number" min="1" max="18" value="1" disabled required></div>
+<button type="submit">답장 보내기</button><output id="feedback" role="status"></output></form></section>
+<section id="admin" hidden><h2>응답 현황</h2><form id="unlock"><label for="key">관리 비밀번호</label><input type="password" id="key" required autocomplete="current-password"><button>응답 보기</button></form><output id="summary" role="status"></output><ul id="responses"></ul></section>
+<footer><a id="switch" href="?admin">관리자 화면</a></footer>
+</main><script>
+const byId = id => document.getElementById(id);
+const reply = byId('reply');
+const guests = byId('guests');
+const feedback = byId('feedback');
+const adminMode = new URLSearchParams(location.search).has('admin');
+const labels = {yes:'참석', no:'불참', maybe:'미정'};
+byId('guest').hidden = adminMode;
+byId('admin').hidden = !adminMode;
+if (adminMode) {
+  byId('switch').href = location.pathname;
+  byId('switch').textContent = '참석 답장 화면';
+}
+function updateCount() {
+  const attending = reply.elements.status.value === 'yes';
+  byId('count').hidden = !attending;
+  guests.disabled = !attending;
+}
+reply.addEventListener('change', updateCount);
+let saved;
+try { saved = JSON.parse(localStorage.getItem('hajin-rsvp')); } catch {}
+let id = saved?.id || crypto.randomUUID();
+if (saved) {
+  reply.elements.name.value = saved.name;
+  reply.elements.status.value = saved.status;
+  guests.value = saved.guests || 1;
+  reply.querySelector('button').textContent = '답장 수정하기';
+}
+updateCount();
+reply.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = reply.querySelector('button');
+  const data = {id, name:reply.elements.name.value.trim(), status:reply.elements.status.value, guests:guests.disabled ? 0 : guests.valueAsNumber};
+  button.disabled = true;
+  feedback.textContent = '답장 보내는 중…';
+  try {
+    const response = await fetch('/api/replies', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+    if (!response.ok) throw Error();
+    try { localStorage.setItem('hajin-rsvp', JSON.stringify(data)); } catch {}
+    feedback.textContent = '답장이 저장됐어요. 고맙습니다!';
+    button.textContent = '답장 수정하기';
+  } catch { feedback.textContent = '답장을 저장하지 못했어요. 잠시 후 다시 시도해 주세요.'; }
+  finally { button.disabled = false; }
+});
+byId('unlock').addEventListener('submit', async event => {
+  event.preventDefault();
+  const summary = byId('summary');
+  const list = byId('responses');
+  list.replaceChildren();
+  summary.textContent = '응답 불러오는 중…';
+  try {
+    const response = await fetch('/api/replies', {headers:{Authorization:'Bearer '+byId('key').value}});
+    if (response.status === 401) { summary.textContent = '관리 비밀번호를 확인해 주세요.'; return; }
+    if (!response.ok) throw Error();
+    const records = await response.json();
+    const totals = {yes:0,no:0,maybe:0,people:0};
+    for (const row of records) {
+      totals[row.status]++;
+      totals.people += row.guests;
+      const item = document.createElement('li');
+      item.textContent = row.name + ' · ' + labels[row.status] + (row.status === 'yes' ? ' ' + row.guests + '명' : '');
+      list.append(item);
+    }
+    summary.textContent = '참석 '+totals.yes+'건 ('+totals.people+'명) · 불참 '+totals.no+'건 · 미정 '+totals.maybe+'건';
+  } catch { summary.textContent = '응답을 불러오지 못했어요. 다시 시도해 주세요.'; }
+});
+</script></body></html>
